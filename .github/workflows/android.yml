@@ -1,0 +1,92 @@
+name: Android ARM64
+
+on:
+  push:
+    branches: [ "master" ]
+    tags: [ "*" ]
+  pull_request:
+    branches: [ "master" ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-android-arm64:
+    name: Build Android ARM64 (NEON, API 24)
+    runs-on: ubuntu-latest
+
+    env:
+      BUILD_TYPE: Release
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Install Ninja
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build
+
+      - name: Install Android NDK
+        id: setup-ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r27d
+          add-to-path: false
+
+      - name: Configure Android ARM64
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: |
+          set -euo pipefail
+          test -f "$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake"
+          echo "Using Android NDK: $ANDROID_NDK_HOME"
+          cmake -S . -B build-android -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake" \
+            -DCMAKE_BUILD_TYPE=${BUILD_TYPE} \
+            -DANDROID_ABI=arm64-v8a \
+            -DANDROID_PLATFORM=android-24 \
+            -DANDROID_STL=c++_static \
+            -DARCHITECTURE=armv8-a \
+            -DBUILD_CI=ON \
+            -DBUILD_NATIVE=OFF \
+            -DBUILD_PGO=OFF \
+            -DBUILD_PRODUCTION=${{ startsWith(github.ref, 'refs/tags/') && 'ON' || 'OFF' }}
+
+      - name: Build StockDory
+        run: cmake --build build-android --config "${BUILD_TYPE}" --parallel 2
+
+      - name: Verify Android executable
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: |
+          set -euo pipefail
+          BINARY="build-android/StockDory"
+          LLVM_BIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+
+          test -s "$BINARY"
+          file "$BINARY"
+          "$LLVM_BIN/llvm-readelf" -h "$BINARY" | tee build-android/elf-header.txt
+          grep -q "AArch64" build-android/elf-header.txt
+
+          "$LLVM_BIN/llvm-readelf" -l "$BINARY" | tee build-android/elf-program-headers.txt
+          grep -q "/system/bin/linker64" build-android/elf-program-headers.txt
+
+          "$LLVM_BIN/llvm-readelf" -d "$BINARY" | tee build-android/elf-dynamic.txt
+          if grep -q "libc++_shared.so" build-android/elf-dynamic.txt; then
+            echo "ERROR: The engine depends on libc++_shared.so"
+            exit 1
+          fi
+
+          "$LLVM_BIN/llvm-strip" --strip-unneeded "$BINARY"
+          file "$BINARY"
+          sha256sum "$BINARY"
+
+      - name: Upload Android ARM64 engine
+        uses: actions/upload-artifact@v4
+        with:
+          name: StockDory-Android-arm64-v8a-api24-NEON
+          path: build-android/StockDory
+          if-no-files-found: error
+          retention-days: 14
