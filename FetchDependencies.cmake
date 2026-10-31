@@ -9,6 +9,27 @@ CPMAddPackage(
         "BUILD_BENCHMARKS OFF"
 )
 
+# Clang from the Android NDK rejects MantaRay's conditional expression when
+# one branch calls the consteval Block() helper with Unroll == 0. An if-constexpr
+# inside a constexpr lambda discards that branch at template instantiation.
+# Keep this narrowly scoped to Android so desktop builds use upstream unchanged.
+if (ANDROID AND EXISTS "${MantaRay_SOURCE_DIR}/include/MantaRay/Backend/Kernel/Dot.h")
+    set(_mantaray_dot "${MantaRay_SOURCE_DIR}/include/MantaRay/Backend/Kernel/Dot.h")
+    file(READ "${_mantaray_dot}" _mantaray_dot_text)
+    set(_mantaray_dot_old "constexpr s00  Step    = Unroll == 0 ? Vectors : Block(Vectors, K, Unroll);")
+    set(_mantaray_dot_new "constexpr s00 Step = [&] { if constexpr (Unroll == 0) return Vectors; else return Block(Vectors, K, Unroll); }();")
+    string(FIND "${_mantaray_dot_text}" "${_mantaray_dot_old}" _mantaray_dot_match)
+    if (NOT _mantaray_dot_match EQUAL -1)
+        string(REPLACE "${_mantaray_dot_old}" "${_mantaray_dot_new}" _mantaray_dot_text "${_mantaray_dot_text}")
+        file(WRITE "${_mantaray_dot}" "${_mantaray_dot_text}")
+        message(STATUS "Patched MantaRay Dot.h consteval branch for Android Clang")
+    elseif (_mantaray_dot_text MATCHES "if constexpr")
+        message(STATUS "MantaRay Dot.h already has an if-constexpr branch")
+    else ()
+        message(FATAL_ERROR "Could not apply Android MantaRay Dot.h compatibility patch; inspect the pinned MantaRay revision")
+    endif ()
+endif ()
+
 CPMAddPackage(
         NAME nanothread
         GITHUB_REPOSITORY TheBlackPlague/nanothread
