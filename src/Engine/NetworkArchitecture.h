@@ -8,6 +8,14 @@
 
 #include <MantaRay/MantaRay.h>
 
+// MantaRay already implements an AArch64 NEON backend. Fail the Android
+// ARM64 build if the toolchain ever selects its scalar or another backend.
+#if defined(__ANDROID__) && defined(__aarch64__)
+    #include <type_traits>
+    static_assert(std::is_same_v<MantaRay::Backend::Native, MantaRay::Backend::ISA::NEON>,
+                  "StockDory Android ARM64 builds must use MantaRay's NEON backend");
+#endif
+
 // Architecture:
 template<MantaRay::s00 HiddenSize, typename Activation = MantaRay::ClippedReLU<>, typename Schedule = MantaRay::Exact>
 using PerspectiveArchitecture = MantaRay::Architecture<
