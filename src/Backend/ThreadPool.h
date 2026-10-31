@@ -13,8 +13,15 @@
 
 using MemoryOrder = std::memory_order;
 
+// Android libc++ does not expose the interference-size constants on all NDKs.
+// AArch64 cache lines are commonly 64 bytes; use a conservative portable fallback.
+#if defined(__ANDROID__)
+constexpr size_t  DestructiveAlignment = 64;
+constexpr size_t ConstructiveAlignment = 64;
+#else
 constexpr size_t  DestructiveAlignment = std::hardware_destructive_interference_size;
 constexpr size_t ConstructiveAlignment = std::hardware_constructive_interference_size;
+#endif
 
 template<typename T>
 class Atomic
