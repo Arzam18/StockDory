@@ -8,7 +8,9 @@ set(CMAKE_CXX_FLAGS         "-flto=full"                    )
 set(CMAKE_CXX_FLAGS_DEBUG   "-Wall -Wextra -g -ftime-report")
 set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG"                  )
 
-if (NOT APPLE)
+# This is an x86-specific compatibility flag. Do not pass it to ARM/Android
+# toolchains: AArch64 uses the NEON backend supplied by MantaRay.
+if (NOT APPLE AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64|i[3-6]86)$")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mno-avx512vnni")
 endif ()
 
@@ -119,7 +121,9 @@ target_link_libraries(StockDory MantaRay nanothread)
 
 if (WIN32)
     target_link_libraries(StockDory advapi32)
-else ()
+elseif (NOT ANDROID)
+    # Android's Bionic libc provides the pthread API; there is no separate
+    # libpthread to link against on Android.
     target_link_libraries(StockDory pthread)
 endif ()
 
