@@ -159,7 +159,7 @@ jobs:
             echo "ERROR: The engine depends on libc++_shared.so"
             exit 1
           fi
-          scripts/verify-android-dotprod.sh \
+          bash scripts/verify-android-dotprod.sh \
             "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang++" \
             "build-android-dotprod"
           "$LLVM_BIN/llvm-strip" --strip-unneeded "$BINARY"
