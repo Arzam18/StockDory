@@ -180,7 +180,7 @@ namespace StockDory
             if (UCIPrompted) return;
 
             std::stringstream ss;
-            ss << "id name " << NAME << " " << VERSION << "\n";
+            ss << "id name " << NAME << " " << VERSION << " " << UCI_DATE << "\n";
             ss << "id nnue " << Evaluation::Name() << "\n";
             ss << "id author " << AUTHOR << "\n";
             ss << "id license " << LICENSE << "\n";
