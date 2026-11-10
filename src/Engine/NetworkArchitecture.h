@@ -8,6 +8,22 @@
 
 #include <MantaRay/MantaRay.h>
 
+#if defined(__ANDROID__) && defined(__aarch64__)
+    #include <type_traits>
+    #if defined(STOCKDORY_EXPECT_DOTPROD)
+        #if !defined(__ARM_FEATURE_DOTPROD)
+            #error "StockDory dotprod build requested, but __ARM_FEATURE_DOTPROD is not enabled"
+        #endif
+        static_assert(std::is_same_v<MantaRay::Backend::Native, MantaRay::Backend::ISA::NEON_DOTPROD>,
+                      "StockDory Android build did not select the real NEON DOTPROD backend");
+        static_assert(MantaRay::Backend::Native::VNNI,
+                      "StockDory Android dotprod backend must expose the packed dot-product path");
+    #else
+        static_assert(std::is_same_v<MantaRay::Backend::Native, MantaRay::Backend::ISA::NEON>,
+                      "StockDory baseline Android ARM64 build must use MantaRay NEON");
+    #endif
+#endif
+
 // Architecture:
 template<MantaRay::s00 HiddenSize, typename Activation = MantaRay::ClippedReLU<>, typename Schedule = MantaRay::Exact>
 using PerspectiveArchitecture = MantaRay::Architecture<
