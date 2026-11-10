@@ -12,6 +12,7 @@ const std::string NAME      = \"StockDory\"                        \;
 const std::string AUTHOR    = \"Shaheryar Sohail and Lee Durbin\"  \;
 const std::string VERSION   = \"${VERSION}\"                       \;
 const std::string CODENAME  = \"${CODENAME}\"                      \;
+const std::string UCI_DATE  = \"${STOCKDORY_UCI_DATE}\"            \;
 const std::string LICENSE   = \"AGPL-3.0\"                         \;
 const std::string COPYRIGHT = \"2023-${COPYRIGHT_YEAR}\"           \;
 
