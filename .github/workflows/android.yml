@@ -1,0 +1,176 @@
+name: Android ARM64
+
+on:
+  push:
+    branches: [ "master" ]
+    tags: [ "*" ]
+  pull_request:
+    branches: [ "master" ]
+  workflow_dispatch:
+    inputs:
+      uci_date:
+        description: "Engine UCI build identity date (YYYYMMDD)"
+        required: true
+        type: string
+        default: "20261110"
+
+permissions:
+  contents: read
+
+jobs:
+  build-android-arm64:
+    name: Build Android ARM64 (NEON + DotProd, API 24)
+    runs-on: ubuntu-latest
+    env:
+      BUILD_TYPE: Release
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Install Ninja
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build
+
+      - name: Set UCI build date
+        env:
+          REQUESTED_UCI_DATE: ${{ inputs.uci_date }}
+        run: |
+          set -euo pipefail
+          if [[ -n "${REQUESTED_UCI_DATE}" ]]; then
+            UCI_DATE="${REQUESTED_UCI_DATE}"
+          else
+            UCI_DATE="$(date -u +%Y%m%d)"
+          fi
+          if [[ ! "${UCI_DATE}" =~ ^[0-9]{8}$ ]]; then
+            echo "ERROR: uci_date must use YYYYMMDD format"
+            exit 1
+          fi
+          echo "UCI_DATE=${UCI_DATE}" >> "$GITHUB_ENV"
+          echo "StockDory UCI build date: ${UCI_DATE}"
+
+      - name: Install Android NDK
+        id: setup-ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r30
+          add-to-path: false
+
+      - name: Show Android compiler version
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: |
+          "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/clang++" --version
+
+      # The standard ARM64 build is deliberately produced and uploaded first.
+      - name: Configure Android ARM64 NEON
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: |
+          set -euo pipefail
+          test -f "$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake"
+          cmake -S . -B build-android-neon -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake" \
+            -DCMAKE_BUILD_TYPE=${BUILD_TYPE} \
+            -DANDROID_ABI=arm64-v8a \
+            -DANDROID_PLATFORM=android-24 \
+            -DANDROID_STL=c++_static \
+            -DARCHITECTURE=armv8-a \
+            -DSTOCKDORY_UCI_DATE="${UCI_DATE}" \
+            -DSTOCKDORY_EXPECT_DOTPROD=OFF \
+            -DBUILD_CI=ON \
+            -DBUILD_NATIVE=OFF \
+            -DBUILD_PGO=OFF \
+            -DBUILD_PRODUCTION=${{ startsWith(github.ref, 'refs/tags/') && 'ON' || 'OFF' }}
+
+      - name: Build Android ARM64 NEON
+        run: cmake --build build-android-neon --config "${BUILD_TYPE}" --parallel 2
+
+      - name: Verify Android ARM64 NEON
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: |
+          set -euo pipefail
+          BINARY="build-android-neon/StockDory"
+          LLVM_BIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          test -s "$BINARY"
+          file "$BINARY"
+          "$LLVM_BIN/llvm-readelf" -h "$BINARY" | tee build-android-neon/elf-header.txt
+          grep -q "AArch64" build-android-neon/elf-header.txt
+          "$LLVM_BIN/llvm-readelf" -l "$BINARY" | tee build-android-neon/elf-program-headers.txt
+          grep -q "/system/bin/linker64" build-android-neon/elf-program-headers.txt
+          "$LLVM_BIN/llvm-readelf" -d "$BINARY" | tee build-android-neon/elf-dynamic.txt
+          if grep -q "libc++_shared.so" build-android-neon/elf-dynamic.txt; then
+            echo "ERROR: The engine depends on libc++_shared.so"
+            exit 1
+          fi
+          "$LLVM_BIN/llvm-strip" --strip-unneeded "$BINARY"
+          sha256sum "$BINARY"
+
+      - name: Upload Android ARM64 NEON engine
+        uses: actions/upload-artifact@v4
+        with:
+          name: StockDory-Android-arm64-v8a-api24-NEON
+          path: |
+            build-android-neon/StockDory
+            build-android-neon/stockdory-build-metadata.txt
+          if-no-files-found: error
+          retention-days: 14
+
+      # This artifact requires ARMv8.2-A DotProd support on the target CPU.
+      - name: Configure Android ARM64 NEON DotProd
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: |
+          set -euo pipefail
+          cmake -S . -B build-android-dotprod -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake" \
+            -DCMAKE_BUILD_TYPE=${BUILD_TYPE} \
+            -DANDROID_ABI=arm64-v8a \
+            -DANDROID_PLATFORM=android-24 \
+            -DANDROID_STL=c++_static \
+            -DARCHITECTURE=armv8.2-a+dotprod \
+            -DSTOCKDORY_UCI_DATE="${UCI_DATE}" \
+            -DSTOCKDORY_EXPECT_DOTPROD=ON \
+            -DBUILD_CI=ON \
+            -DBUILD_NATIVE=OFF \
+            -DBUILD_PGO=OFF \
+            -DBUILD_PRODUCTION=${{ startsWith(github.ref, 'refs/tags/') && 'ON' || 'OFF' }}
+
+      - name: Build Android ARM64 NEON DotProd
+        run: cmake --build build-android-dotprod --config "${BUILD_TYPE}" --parallel 2
+
+      - name: Verify Android ARM64 NEON DotProd
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: |
+          set -euo pipefail
+          BINARY="build-android-dotprod/StockDory"
+          LLVM_BIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          test -s "$BINARY"
+          file "$BINARY"
+          "$LLVM_BIN/llvm-readelf" -h "$BINARY" | tee build-android-dotprod/elf-header.txt
+          grep -q "AArch64" build-android-dotprod/elf-header.txt
+          "$LLVM_BIN/llvm-readelf" -l "$BINARY" | tee build-android-dotprod/elf-program-headers.txt
+          grep -q "/system/bin/linker64" build-android-dotprod/elf-program-headers.txt
+          "$LLVM_BIN/llvm-readelf" -d "$BINARY" | tee build-android-dotprod/elf-dynamic.txt
+          if grep -q "libc++_shared.so" build-android-dotprod/elf-dynamic.txt; then
+            echo "ERROR: The engine depends on libc++_shared.so"
+            exit 1
+          fi
+          scripts/verify-android-dotprod.sh \
+            "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang++" \
+            "build-android-dotprod"
+          "$LLVM_BIN/llvm-strip" --strip-unneeded "$BINARY"
+          sha256sum "$BINARY"
+
+      - name: Upload Android ARM64 NEON DotProd engine
+        uses: actions/upload-artifact@v4
+        with:
+          name: StockDory-Android-arm64-v8a-api24-NEON-DOTPROD
+          path: |
+            build-android-dotprod/StockDory
+            build-android-dotprod/stockdory-build-metadata.txt
+          if-no-files-found: error
+          retention-days: 14
