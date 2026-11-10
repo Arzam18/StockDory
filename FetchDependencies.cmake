@@ -76,20 +76,42 @@ namespace MantaRay::Backend::ISA
     endif ()
     file(WRITE "${_mantaray_target}" "${_mantaray_target_text}")
 
-    # Avoid instantiating MantaRay's consteval Block() branch for Unroll=0;
-    # NDK Clang requires an if-constexpr-discarded branch here.
+    # Avoid instantiating MantaRay's consteval Block() branch for Unroll=0.
+    # Match only the ternary expression, not the declaration or indentation.
+    # Include real tab/newline characters in the regex class: CMake's regex
+    # engine does not support POSIX [:space:] classes.
     file(READ "${_mantaray_dot}" _mantaray_dot_text)
-    set(_mantaray_dot_old "constexpr s00    Step    = Unroll == 0 ? Vectors : Block(Vectors, K, Unroll);")
-    set(_mantaray_dot_new "constexpr s00 Step = [&] { if constexpr (Unroll == 0) return Vectors; else return Block(Vectors, K, Unroll); }();")
-    string(FIND "${_mantaray_dot_text}" "${_mantaray_dot_old}" _mantaray_dot_match)
-    if (NOT _mantaray_dot_match EQUAL -1)
-        string(REPLACE "${_mantaray_dot_old}" "${_mantaray_dot_new}" _mantaray_dot_text "${_mantaray_dot_text}")
-        file(WRITE "${_mantaray_dot}" "${_mantaray_dot_text}")
-        message(STATUS "Patched MantaRay Dot.h consteval branch for Android Clang")
-    elseif (_mantaray_dot_text MATCHES "if constexpr")
-        message(STATUS "MantaRay Dot.h already includes the Android Clang fix")
+    set(_mantaray_dot_had_crlf FALSE)
+    if (_mantaray_dot_text MATCHES "\r\n")
+        set(_mantaray_dot_had_crlf TRUE)
+    endif ()
+    string(REPLACE "\r\n" "\n" _mantaray_dot_text "${_mantaray_dot_text}")
+    string(REPLACE "\r" "\n" _mantaray_dot_text "${_mantaray_dot_text}")
+    string(ASCII 9 10 _mantaray_ws)
+    set(_mantaray_dot_expr_pattern "Unroll[ ${_mantaray_ws}]*==[ ${_mantaray_ws}]*0[ ${_mantaray_ws}]*[?][ ${_mantaray_ws}]*Vectors[ ${_mantaray_ws}]*:[ ${_mantaray_ws}]*Block[ ${_mantaray_ws}]*\\([ ${_mantaray_ws}]*Vectors[ ${_mantaray_ws}]*,[ ${_mantaray_ws}]*K[ ${_mantaray_ws}]*,[ ${_mantaray_ws}]*Unroll[ ${_mantaray_ws}]*\\)")
+    set(_mantaray_dot_expr_replacement [=[([&] { if constexpr (Unroll == 0) return Vectors; else return Block(Vectors, K, Unroll); }())]=])
+
+    if (_mantaray_dot_text MATCHES "if constexpr \\(Unroll == 0\\) return Vectors; else return Block\\(Vectors, K, Unroll\\)")
+        message(STATUS "MantaRay Dot.h already includes the Android Clang if-constexpr fix")
     else ()
-        message(FATAL_ERROR "Could not patch the pinned MantaRay Dot.h for Android Clang")
+        string(REGEX MATCH "${_mantaray_dot_expr_pattern}" _mantaray_dot_expr_match "${_mantaray_dot_text}")
+        if (_mantaray_dot_expr_match)
+            string(REGEX REPLACE "${_mantaray_dot_expr_pattern}" "${_mantaray_dot_expr_replacement}" _mantaray_dot_text "${_mantaray_dot_text}")
+            if (_mantaray_dot_had_crlf)
+                string(REPLACE "\n" "\r\n" _mantaray_dot_text "${_mantaray_dot_text}")
+            endif ()
+            file(WRITE "${_mantaray_dot}" "${_mantaray_dot_text}")
+            message(STATUS "Patched MantaRay Dot.h Unroll=0 ternary for Android Clang")
+        else ()
+            file(STRINGS "${_mantaray_dot}" _mantaray_dot_diagnostic_lines REGEX "Step|Unroll|Block\\(")
+            if (_mantaray_dot_diagnostic_lines)
+                string(REPLACE ";" "\n  " _mantaray_dot_diagnostic "${_mantaray_dot_diagnostic_lines}")
+            else ()
+                set(_mantaray_dot_diagnostic "No lines containing Step, Unroll, or Block( were found")
+            endif ()
+            message(FATAL_ERROR
+                "Could not patch MantaRay Dot.h for Android Clang. Expected the Unroll == 0 ? Vectors : Block(Vectors, K, Unroll) expression. Relevant source lines:\n  ${_mantaray_dot_diagnostic}")
+        endif ()
     endif ()
 endif ()
 
