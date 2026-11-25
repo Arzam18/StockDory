@@ -10,8 +10,32 @@
 #include <iostream>
 #include <span>
 #include <string_view>
+#include <type_traits>
 
 #include <MantaRay/MantaRay.h>
+
+#if defined(__ANDROID__) && defined(__aarch64__)
+    #if defined(STOCKDORY_EXPECT_DOTPROD)
+        #if !defined(__ARM_FEATURE_DOTPROD)
+            #error "StockDory DotProd build requested, but the compiler did not enable ARM FEAT_DOTPROD"
+        #endif
+        static_assert(
+            std::is_same_v<
+                MantaRay::Backend::ISAOf<MantaRay::Lowering::Native>,
+                MantaRay::Backend::ISA::NEON_DOTPROD
+            >,
+            "StockDory Android DotProd build did not select MantaRay NEON_DOTPROD"
+        );
+    #else
+        static_assert(
+            std::is_same_v<
+                MantaRay::Backend::ISAOf<MantaRay::Lowering::Native>,
+                MantaRay::Backend::ISA::NEON
+            >,
+            "StockDory baseline Android ARM64 build must use MantaRay NEON"
+        );
+    #endif
+#endif
 
 #include "Model/NeuralNetworkBinary.h"
 
