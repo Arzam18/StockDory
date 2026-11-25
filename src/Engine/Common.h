@@ -543,7 +543,11 @@ namespace StockDory
     // Use the standard library's cache-line hint when available. Some libc++
     // versions (including Android NDK r27c) do not expose this optional C++17
     // constant, so use a conservative 64-byte fallback on those toolchains.
-#if defined(__cpp_lib_hardware_interference_size)
+#if defined(__ANDROID__)
+    // Android libc++ versions may advertise the feature-test macro without
+    // exposing hardware_destructive_interference_size in this API/toolchain.
+    constexpr size_t DestructiveAlignment = 64;
+#elif defined(__cpp_lib_hardware_interference_size)
     constexpr size_t DestructiveAlignment = std::hardware_destructive_interference_size;
 #else
     constexpr size_t DestructiveAlignment = 64;
