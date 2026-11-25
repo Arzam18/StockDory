@@ -296,7 +296,8 @@ namespace StockDory
                                 Direction == West || Direction == NorthWest || Direction == SouthWest ? bb & NotFileA :
                                                                                                         bb            ;
 
-        return Direction > 0 ? source << Direction : source >> -Direction;
+        if constexpr (Direction > 0) return source << Direction;
+        else                         return source >> -Direction;
     }
 
     struct PinBitBoard
@@ -539,7 +540,14 @@ namespace StockDory
 
     using MemoryOrder = std::memory_order;
 
+    // Use the standard library's cache-line hint when available. Some libc++
+    // versions (including Android NDK r27c) do not expose this optional C++17
+    // constant, so use a conservative 64-byte fallback on those toolchains.
+#if defined(__cpp_lib_hardware_interference_size)
     constexpr size_t DestructiveAlignment = std::hardware_destructive_interference_size;
+#else
+    constexpr size_t DestructiveAlignment = 64;
+#endif
 
     template<typename T>
     class Atomic
