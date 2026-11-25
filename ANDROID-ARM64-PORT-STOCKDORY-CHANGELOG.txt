@@ -1,0 +1,68 @@
+StockDory Android ARM64 Port - Change Log
+==========================================
+
+Base source
+-----------
+- New upstream source: StockDory-master(new).zip
+- Previous Android fork: StockDory-master (android).zip
+- Upstream MantaRay commit retained: 7d240a33868e751f4d97619d6903c1c0e8bdbad6
+- Upstream Eclipse model retained: Eclipse-2715d6146c.nnue
+- Older Android model Eclipse-0e72a60543.nnue was not copied.
+
+Changed / added files
+---------------------
+1. CMakeLists.txt
+   - Added STOCKDORY_EXPECT_DOTPROD Android-only selection validation.
+   - Added Android build metadata including architecture, backend and embedded model checksum.
+   - Defines STOCKDORY_EXPECT_DOTPROD for the DotProd engine build.
+   - Avoids linking a separate pthread library on Android/Bionic.
+
+2. FetchDependencies.cmake
+   - Keeps upstream's newer MantaRay, fastrange and strutil dependency pins.
+   - Patches the newer MantaRay Lowering::Target + Backend::ISAOf API.
+   - Adds an exact u08*i08 SDOT implementation with signed-centering correction.
+   - Selects NEON_DOTPROD only when __ARM_FEATURE_DOTPROD is defined.
+   - Fails clearly if the pinned dependency's expected source layout changes.
+
+3. src/Engine/Evaluation.h
+   - Adds compile-time checks ensuring Android baseline uses MantaRay NEON and the optimized target uses MantaRay NEON_DOTPROD.
+   - Does not replace upstream engine evaluation graph or network API.
+
+4. .github/workflows/android.yml
+   - Adds NDK r27c / API 24 / arm64-v8a builds.
+   - Builds and uploads separate baseline NEON and NEON DotProd artifacts.
+   - No uci_date input or date patching.
+   - Verifies ELF, Android linker, static C++ runtime, backend selection and SIMD assembly probes.
+
+5. scripts/verify-android-simd.sh
+   - Compiles the pinned MantaRay baseline NEON or DotProd byte-dot kernel using the selected Android compiler.
+   - Requires NEON widening/accumulate instructions in baseline and SDOT in DotProd.
+   - Rejects SDOT in the baseline probe.
+
+6. ANDROID-ARM64-PORT-STOCKDORY.md
+   - Documents the source baseline, implementation, constraints and validation limits.
+
+Confirmed unchanged
+-------------------
+- Upstream StockDory engine implementation and refactored source tree.
+- Upstream main.cpp / UCI lifecycle and thread-pool implementation.
+- Upstream CMake version/codename and build configuration options, apart from Android-specific additions.
+- Upstream MantaRay commit and new dependency model.
+- Upstream Eclipse-2715d6146c.nnue model; no network substitution.
+- Upstream Information.cmake; no UCI date injection.
+- Existing x86 compiler configuration and non-Android link behavior.
+
+Validation performed locally (not a full Android build)
+--------------------------------------------------------
+- CMake configure/generate passed for both Android NEON and DotProd option sets using fixture dependency targets and the pinned MantaRay API's exact insertion anchors.
+- The MantaRay dependency patch passed an idempotence test.
+- AArch64 Android-target Clang 17 compiled the generated DotProd ISA kernel; disassembly contains SDOT.
+- The ARMv8-A baseline NEON instruction probe emitted widening/accumulate instructions and no SDOT.
+- The u08 centering/correction identity matched direct u08*i08 products for 100,000 random vectors.
+- Workflow YAML, embedded Bash steps, and the SIMD verification shell script passed syntax checks.
+
+Validation limitations
+----------------------
+- The complete Android NDK build and full StockDory translation-unit compilation against the actual fetched MantaRay dependency have not yet run locally.
+- Actual network initialization, Android runtime, NPS and playing strength require GitHub Actions and device testing.
+- The SDOT probe verifies that the MantaRay DotProd kernel emits SDOT. The current Eclipse graph's declared i16 affine weights may mean the engine does not execute the u08*i08 DotProd path during evaluation.

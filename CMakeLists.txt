@@ -23,6 +23,23 @@ option(BUILD_CI         "Build for CI - BUILD_NATIVE/BUILD_PGO is ignored" OFF)
 option(BUILD_TUNING     "Build with tunable UCI parameters"                OFF)
 option(BUILD_PRODUCTION "Build for production - Version is solidified"     OFF)
 
+# Android ARM64 backend selection. DotProd is a separate binary because it
+# requires ARMv8.2-A FEAT_DOTPROD at runtime.
+option(STOCKDORY_EXPECT_DOTPROD "Require the Android ARM64 NEON DotProd backend" OFF)
+
+if (STOCKDORY_EXPECT_DOTPROD)
+    if (NOT ANDROID)
+        message(FATAL_ERROR "STOCKDORY_EXPECT_DOTPROD is only supported for Android builds")
+    endif ()
+    if (NOT ARCHITECTURE MATCHES "dotprod")
+        message(FATAL_ERROR "STOCKDORY_EXPECT_DOTPROD requires ARCHITECTURE=armv8.2-a+dotprod")
+    endif ()
+endif ()
+
+if (ANDROID AND ARCHITECTURE MATCHES "dotprod" AND NOT STOCKDORY_EXPECT_DOTPROD)
+    message(FATAL_ERROR "A DotProd Android target must set STOCKDORY_EXPECT_DOTPROD=ON")
+endif ()
+
 set(RELEASE_FILE  "${CMAKE_CURRENT_SOURCE_DIR}/.stockdory-release")
 set(REVISION_FILE "${CMAKE_CURRENT_SOURCE_DIR}/.stockdory-revision")
 
@@ -95,6 +112,26 @@ include(EmbedFile.cmake)
 
 file(GLOB NNModel "src/Engine/Model/*.nnue")
 
+if (ANDROID)
+    if (STOCKDORY_EXPECT_DOTPROD)
+        set(STOCKDORY_SIMD "ARM64 NEON + DotProd")
+        set(STOCKDORY_DOTPROD_NOTE "MantaRay DotProd VNNI backend selected; SDOT is used for eligible u08*i08 kernels only")
+    else ()
+        set(STOCKDORY_SIMD "ARM64 NEON")
+        set(STOCKDORY_DOTPROD_NOTE "not enabled")
+    endif ()
+
+    set(STOCKDORY_NETWORK_METADATA "")
+    foreach(_network IN LISTS NNModel)
+        get_filename_component(_network_name "${_network}" NAME)
+        file(SHA256 "${_network}" _network_sha256)
+        string(APPEND STOCKDORY_NETWORK_METADATA "network=${_network_name}\nnetwork_sha256=${_network_sha256}\n")
+    endforeach ()
+
+    file(WRITE "${CMAKE_BINARY_DIR}/stockdory-build-metadata.txt"
+        "engine=StockDory\nversion=${VERSION}\ncodename=${CODENAME}\nplatform=${CMAKE_SYSTEM_NAME}\nprocessor=${CMAKE_SYSTEM_PROCESSOR}\narchitecture=${ARCHITECTURE}\nsimd=${STOCKDORY_SIMD}\ndotprod_note=${STOCKDORY_DOTPROD_NOTE}\n${STOCKDORY_NETWORK_METADATA}")
+endif ()
+
 if (NNModel)
     message(STATUS "Embedding NNUE Model: ${NNModel}")
     EmbedFile(
@@ -112,6 +149,10 @@ if (BUILD_TUNING)
     target_compile_definitions(StockDory PRIVATE BUILD_TUNING)
 endif ()
 
+if (ANDROID AND STOCKDORY_EXPECT_DOTPROD)
+    target_compile_definitions(StockDory PRIVATE STOCKDORY_EXPECT_DOTPROD=1)
+endif ()
+
 target_include_directories(StockDory PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_include_directories(StockDory PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/BuildSystem)
 
@@ -121,7 +162,7 @@ target_link_libraries(StockDory MantaRay)
 
 if (WIN32)
     target_link_libraries(StockDory advapi32)
-else ()
+elseif (NOT ANDROID)
     target_link_libraries(StockDory pthread)
 endif ()
 
