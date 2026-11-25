@@ -8,6 +8,23 @@ CPMAddPackage(
         "BUILD_EXAMPLES OFF"
 )
 
+# Clang in Android NDK r27c needs narrow source-compatibility fixes in this
+# pinned MantaRay revision. These preserve compile-time evaluation and do not
+# alter the network graph, lowering decisions, or arithmetic.
+function(stockdory_patch_mantaray_file path old_text new_text description)
+    file(READ "${path}" _source)
+    string(FIND "${_source}" "${old_text}" _old_position)
+    if (_old_position EQUAL -1)
+        string(FIND "${_source}" "${new_text}" _new_position)
+        if (_new_position EQUAL -1)
+            message(FATAL_ERROR "MantaRay compatibility patch anchor missing (${description}): ${path}")
+        endif ()
+        return()
+    endif ()
+    string(REPLACE "${old_text}" "${new_text}" _patched "${_source}")
+    file(WRITE "${path}" "${_patched}")
+endfunction()
+
 # The upstream MantaRay revision uses Lowering::Target + Backend::ISAOf
 # (the older Android port patched the retired Backend/Target.h API). Add an
 # exact ARMv8.2-A DotProd ISA implementation to this pinned dependency checkout.
@@ -16,12 +33,42 @@ if (ANDROID)
     set(_mantaray_isaof "${MantaRay_SOURCE_DIR}/include/MantaRay/Backend/ISA/ISAOf.h")
     set(_mantaray_neon "${MantaRay_SOURCE_DIR}/include/MantaRay/Backend/ISA/NEON.h")
     set(_mantaray_dotprod "${MantaRay_SOURCE_DIR}/include/MantaRay/Backend/ISA/NEON_DOTPROD.h")
+    set(_mantaray_model "${MantaRay_SOURCE_DIR}/include/MantaRay/Model.h")
+    set(_mantaray_update "${MantaRay_SOURCE_DIR}/include/MantaRay/Backend/Kernel/Update.h")
+    set(_mantaray_network "${MantaRay_SOURCE_DIR}/include/MantaRay/Runtime/Network.h")
 
-    foreach (_required IN ITEMS "${_mantaray_lowering_target}" "${_mantaray_isaof}" "${_mantaray_neon}")
+    foreach (_required IN ITEMS
+        "${_mantaray_lowering_target}" "${_mantaray_isaof}" "${_mantaray_neon}"
+        "${_mantaray_model}" "${_mantaray_update}" "${_mantaray_network}"
+    )
         if (NOT EXISTS "${_required}")
             message(FATAL_ERROR "Pinned MantaRay source layout changed; missing ${_required}")
         endif ()
     endforeach ()
+
+    stockdory_patch_mantaray_file(
+        "${_mantaray_model}"
+        [=[        template<auto>
+        constexpr inline bool Rejected = false;
+        template<Lines<0> R>
+        constexpr inline bool Rejected<R> = true;]=]
+        [=[        template<auto R>
+        constexpr inline bool Rejected =
+            std::is_same_v<std::remove_cv_t<decltype(R)>, Lines<0>>;]=]
+        "Clang-compatible MantaRay diagnostic-report type check"
+    )
+    stockdory_patch_mantaray_file(
+        "${_mantaray_update}"
+        "consteval s00 Tile(const s00 vectors, const s00 limit)"
+        "constexpr s00 Tile(const s00 vectors, const s00 limit)"
+        "MantaRay update-kernel tile helper"
+    )
+    stockdory_patch_mantaray_file(
+        "${_mantaray_network}"
+        "consteval Rational HeadFactor(const Rational head, const Rational scale)"
+        "constexpr Rational HeadFactor(const Rational head, const Rational scale)"
+        "MantaRay head-factor helper"
+    )
 
     file(WRITE "${_mantaray_dotprod}" [=[
 // StockDory Android ARM64 specialization for ARMv8.2-A FEAT_DOTPROD.
