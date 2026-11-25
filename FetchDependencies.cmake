@@ -11,8 +11,84 @@ CPMAddPackage(
 # Clang in Android NDK r27c needs narrow source-compatibility fixes in this
 # pinned MantaRay revision. These preserve compile-time evaluation and do not
 # alter the network graph, lowering decisions, or arithmetic.
+function(stockdory_patch_mantaray_model_report path)
+    file(READ "${path}" _source)
+    string(REPLACE "\r\n" "\n" _source "${_source}")
+    string(REPLACE "\r" "\n" _source "${_source}")
+
+    set(_primary "constexpr inline bool Rejected = false;")
+    set(_specialization "constexpr inline bool Rejected<R> = true;")
+    set(_replacement "constexpr inline bool Rejected = std::is_same_v<std::remove_cv_t<decltype(R)>, Lines<0>>;")
+
+    string(FIND "${_source}" "${_replacement}" _already_patched)
+    if (NOT _already_patched EQUAL -1)
+        return()
+    endif ()
+
+    string(FIND "${_source}" "${_primary}" _primary_pos)
+    string(FIND "${_source}" "${_specialization}" _specialization_pos)
+    if (_primary_pos EQUAL -1 OR _specialization_pos EQUAL -1 OR _specialization_pos LESS _primary_pos)
+        message(FATAL_ERROR "MantaRay Model.h diagnostic-report declarations changed; cannot apply Android Clang compatibility patch: ${path}")
+    endif ()
+
+    # Locate the template<auto> immediately preceding the primary Rejected
+    # declaration, then change only that occurrence (Model.h has other
+    # template<auto> declarations which must remain untouched).
+    string(SUBSTRING "${_source}" 0 ${_primary_pos} _before_primary)
+    string(FIND "${_before_primary}" "template<auto>" _template_pos REVERSE)
+    if (_template_pos EQUAL -1)
+        message(FATAL_ERROR "Could not locate the Rejected primary template in MantaRay Model.h: ${path}")
+    endif ()
+    string(LENGTH "template<auto>" _template_length)
+    math(EXPR _after_template_pos "${_template_pos} + ${_template_length}")
+    string(SUBSTRING "${_source}" 0 ${_template_pos} _template_prefix)
+    string(SUBSTRING "${_source}" ${_after_template_pos} -1 _template_suffix)
+    set(_source "${_template_prefix}template<auto R>${_template_suffix}")
+    string(REPLACE "${_primary}" "${_replacement}" _source "${_source}")
+
+    # Remove the old class-valued partial-specialization declaration by line
+    # positions instead of a formatting-sensitive multi-line string match.
+    string(FIND "${_source}" "template<Lines<0>" _specialization_template_pos)
+    string(FIND "${_source}" "${_specialization}" _specialization_decl_pos)
+    if (_specialization_template_pos EQUAL -1 OR _specialization_decl_pos EQUAL -1 OR
+        _specialization_decl_pos LESS _specialization_template_pos)
+        message(FATAL_ERROR "Could not locate the old Rejected<Lines<0>> specialization in MantaRay Model.h: ${path}")
+    endif ()
+
+    string(SUBSTRING "${_source}" 0 ${_specialization_template_pos} _before_specialization)
+    string(FIND "${_before_specialization}" "\n" _previous_line_end REVERSE)
+    math(EXPR _specialization_line_start "${_previous_line_end} + 1")
+
+    string(SUBSTRING "${_source}" ${_specialization_template_pos} -1 _specialization_tail)
+    string(FIND "${_specialization_tail}" "${_specialization}" _local_decl_pos)
+    string(LENGTH "${_specialization}" _specialization_length)
+    math(EXPR _after_decl_pos "${_local_decl_pos} + ${_specialization_length}")
+    string(SUBSTRING "${_specialization_tail}" ${_after_decl_pos} -1 _after_decl)
+    string(FIND "${_after_decl}" "\n" _specialization_line_end)
+    if (_specialization_line_end EQUAL -1)
+        string(LENGTH "${_specialization_tail}" _tail_length)
+        math(EXPR _remove_end "${_specialization_template_pos} + ${_tail_length}")
+    else ()
+        math(EXPR _remove_end "${_specialization_template_pos} + ${_after_decl_pos} + ${_specialization_line_end} + 1")
+    endif ()
+
+    string(SUBSTRING "${_source}" 0 ${_specialization_line_start} _source_prefix)
+    string(SUBSTRING "${_source}" ${_remove_end} -1 _source_suffix)
+    set(_source "${_source_prefix}${_source_suffix}")
+
+    file(WRITE "${path}" "${_source}")
+    message(STATUS "Applied Android Clang-compatible MantaRay Model.h diagnostic-report check")
+endfunction()
+
 function(stockdory_patch_mantaray_file path old_text new_text description)
     file(READ "${path}" _source)
+
+    # CPM checks out dependency files with their repository line endings, but
+    # cached archives / Windows-authored source snapshots may contain CRLF.
+    # Normalize before matching multi-line compatibility anchors.
+    string(REPLACE "\r\n" "\n" _source "${_source}")
+    string(REPLACE "\r" "\n" _source "${_source}")
+
     string(FIND "${_source}" "${old_text}" _old_position)
     if (_old_position EQUAL -1)
         string(FIND "${_source}" "${new_text}" _new_position)
@@ -46,17 +122,7 @@ if (ANDROID)
         endif ()
     endforeach ()
 
-    stockdory_patch_mantaray_file(
-        "${_mantaray_model}"
-        [=[        template<auto>
-        constexpr inline bool Rejected = false;
-        template<Lines<0> R>
-        constexpr inline bool Rejected<R> = true;]=]
-        [=[        template<auto R>
-        constexpr inline bool Rejected =
-            std::is_same_v<std::remove_cv_t<decltype(R)>, Lines<0>>;]=]
-        "Clang-compatible MantaRay diagnostic-report type check"
-    )
+    stockdory_patch_mantaray_model_report("${_mantaray_model}")
     stockdory_patch_mantaray_file(
         "${_mantaray_update}"
         "consteval s00 Tile(const s00 vectors, const s00 limit)"
